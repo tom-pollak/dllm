@@ -10,6 +10,13 @@
 # ]
 # ///
 
+# dice = random.random()
+# ids[i] = (
+#     mask_id if dice < .1
+#     else random.randint(0, tok.vocab_size - 1) if dice < .9
+#     else ids[i]
+# )
+
 import os, random, torch
 from datasets import load_dataset
 from accelerate import notebook_launcher
@@ -37,12 +44,7 @@ def main():
             n_mask = max(int(len(cand) * random.uniform(0.15, 0.99)), 1)
             for i in random.sample(cand, n_mask):
                 labels[i] = ids[i]
-                dice = random.random()
-                ids[i] = (
-                    mask_id if dice < .1
-                    else random.randint(0, tok.vocab_size - 1) if dice < .9
-                    else ids[i]
-                )
+                ids[i] = mask_id
             return ids, labels
 
         mapped = (_single(m) for m in batch["messages"])
@@ -59,10 +61,10 @@ def main():
     project_name, run_name = "dllm", "modernbert-flowlm-tulu"
     os.environ.setdefault("WANDB_PROJECT", project_name)
     args = TrainingArguments(
-        run_name,
+        run_name, num_train_epochs=1,
         per_device_train_batch_size=32, per_device_eval_batch_size=32,
-        lr_scheduler_type="cosine", bf16=True, remove_unused_columns=False,
-        eval_strategy="steps", eval_steps=200, num_train_epochs=6,
+        lr_scheduler_type="cosine", bf16=True,
+        eval_strategy="steps", eval_steps=200,
         report_to="wandb", push_to_hub=True,
     )
     trainer = Trainer(
@@ -74,4 +76,3 @@ def main():
 
 if __name__ == "__main__": main()
 # notebook_launcher(main, num_processes=torch.cuda.device_count())
-

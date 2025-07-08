@@ -1,3 +1,14 @@
+#!/usr/bin/env -S uv run torchrun --standalone --nproc_per_node=gpu
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#   "accelerate",
+#   "datasets",
+#   "torch",
+#   "transformers",
+#   "wandb",
+# ]
+# ///
 import os
 import torch, torch.nn.functional as F
 from datasets import load_dataset
@@ -33,46 +44,52 @@ dd = (ds
 
 ## Train
 class DuoTrainer(Trainer):
-    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-        ids = inputs["input_ids"]                      # (B,S)
+    def compute_loss(self, model, inputs, return_outputs=False, **_):
+        ids   = inputs["input_ids"]  # (B,S)
+        B, S  = ids.shape
         device = ids.device
-        B, S = ids.shape
-        hot = F.one_hot(ids, V).float()
 
+        hot = F.one_hot(ids, V).float()  # (B,S,V)
+
+        # Duo Corruption
+        t      = torch.rand((B,), device=device) * 0.12 + 0.03   # blur level
+        alpha  = 1.0 - t[:, None, None]                          # signal mix
+        eps    = torch.randn_like(hot)                           # N(0,1) noise
+        w_t    = alpha * hot + torch.sqrt(1.0 - alpha**2) * eps  # noisy logits
+
+        step  = self.state.global_step
+        temperature = max(1e-3 * (1 - step / 5e5), 0.0) + 1e-8  # τ-anneal
+        probs = torch.softmax(w_t / temperature, dim=-1)
+
+        # Map back to embedding space
+        W_E = model.get_input_embeddings().weight
+        emb   = probs.to(W_E.dtype) @ W_E  # (B,S,D)
+        attn  = (ids != pad_token_id).int()
+
+        # Forward pass
         with self.accelerator.autocast():
-            t = torch.rand(B, 1, 1).to(device) * 0.12 + 0.03
-            alpha = 1.0 - t
+            logits = model(inputs_embeds=emb, attention_mask=attn).logits  # (B,S,V)
+            logp   = F.log_softmax(logits, dim=-1)
 
-            eps = torch.randn_like(hot)
-            w_t = alpha * hot + torch.sqrt(1.0 - alpha ** 2) * eps
+        # Loss
+        kl_pq = F.kl_div(logp, hot, reduction='none')     # KL(p||q)
+        kl_qp = F.kl_div((hot + 1e-8).log(), logp.exp(),  # KL(q||p)
+                         reduction='none', log_target=True)
+        sym_kl = (kl_pq + kl_qp).sum(-1)  # (B,S)
 
-            step = self.state.global_step
-            temp = max(1e-3 * (1 - step / 5e5), 0.0) + 1e-8
-            probs = torch.softmax(w_t / temp, -1).to(torch.bfloat16)
-            W_E = model.get_input_embeddings().weight
-            emb   = probs @ W_E
-            attn = (ids != pad_token_id).int()
-            out   = model(inputs_embeds=emb, attention_mask=attn)
-            logp  = torch.log_softmax(out.logits, -1)
+        view_scale = t / (V * (1 - t) + t)  # (B,)
 
+        mask  = (ids != pad_token_id).float()
+        loss  = (view_scale[:, None] * sym_kl * mask).sum() / mask.sum()
 
-        kl_qp = F.kl_div(logp, hot, reduction="none")
-        logq = (hot + 1e-8).log()
-        kl_pq = F.kl_div(logq, logp.exp(), reduction="none", log_target=True)
-        kl = (kl_qp + kl_pq).sum(-1)
+        return (loss, logits) if return_outputs else loss
 
-        scale = (1.0 - alpha.squeeze(-1).squeeze(-1)) / (alpha.squeeze(-1).squeeze(-1) + 1e-8)
-        mask = (ids != pad_token_id).float()
-        loss = (kl * scale[:, None] * mask).sum() / mask.sum()
-
-        return (loss, out) if return_outputs else loss
-
-run_name = "modernbert-duo-tulu"
-os.environ.setdefault("WANDB_PROJECT", run_name)
+project_name = "modernbert-duo-tulu"
+os.environ.setdefault("WANDB_PROJECT", project_name)
 args = TrainingArguments(
-    run_name, bf16=True,
+    bf16=True,
     per_device_train_batch_size=32, per_device_eval_batch_size=32,
-    eval_strategy="steps", eval_steps=1000, num_train_epochs=1,
+    num_train_epochs=1, logging_steps=20, eval_strategy="steps", eval_steps=1000,
     report_to="wandb", push_to_hub=True,
     deepspeed={
         "zero_optimization": {
@@ -96,5 +113,4 @@ trainer = DuoTrainer(
     data_collator=DataCollatorWithPadding(tok),
 )
 trainer.train()
-tok.push_to_hub(f"tommyp111/{run_name}")
-
+tok.push_to_hub(f"tommyp111/{project_name}")
