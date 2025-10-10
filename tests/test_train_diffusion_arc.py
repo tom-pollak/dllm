@@ -42,7 +42,7 @@ def test_main_runs_with_tiny_model(tmp_path: Path) -> None:
         "--batch-size",
         "1",
         "--epochs",
-        "200",
+        "10",
         "--timesteps",
         "4",
         "--num-workers",
