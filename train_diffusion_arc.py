@@ -22,7 +22,15 @@ from dllm import (
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("data_dir", type=str, help="Path to ARC dataset root directory")
+    parser.add_argument(
+        "data_dir",
+        type=str,
+        help=(
+            "Path to ARC dataset root directory (the folder containing the "
+            "'training' and 'evaluation' sub-directories from the official "
+            "fchollet/ARC data dump)."
+        ),
+    )
     parser.add_argument("--output-dir", type=str, default="outputs/diffusion_arc")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--epochs", type=int, default=50)

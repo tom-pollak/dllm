@@ -1,4 +1,10 @@
-"""Utilities for loading ARC-AGI style datasets."""
+"""Utilities for loading ARC-AGI style datasets.
+
+The loader expects the canonical ARC directory structure from the
+`fchollet/ARC <https://github.com/fchollet/ARC>`_ repository (or an
+equivalent mirror). ``root`` should point at the folder that contains the
+``training`` and ``evaluation`` sub-directories with ``*.json`` task files.
+"""
 
 from __future__ import annotations
 
