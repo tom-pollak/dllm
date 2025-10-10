@@ -11,7 +11,7 @@ from .diffusion_transformer import (
 from .visualize_sampling import (
     ExampleVisualization,
     create_batch_visualization,
-    decode_tokens,
+    create_corruption_progression_visualization,
 )
 
 __all__ = [
@@ -24,5 +24,5 @@ __all__ = [
     "timestep_embedding",
     "ExampleVisualization",
     "create_batch_visualization",
-    "decode_tokens",
+    "create_corruption_progression_visualization",
 ]
