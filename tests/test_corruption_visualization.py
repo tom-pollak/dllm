@@ -38,14 +38,14 @@ def test_corruption_progression_visualization(arc_batch):
         timesteps, device=device, schedule_type="linear", beta_start=1e-4, beta_end=0.03
     )
 
-    # Create visualization
+    # Create visualization (all examples in batch)
     fig = create_corruption_progression_visualization(
         arc_batch,
         diffusion_schedule=schedule,
         max_grid_size=30,
         max_timesteps=timesteps,
         vocab_size=11,
-        example_index=0,
+        example_index=None,  # Visualize all examples in the batch
         device=device,
         title="Corruption Progression Test",
     )

@@ -269,11 +269,11 @@ def create_corruption_progression_visualization(
     max_grid_size: int,
     max_timesteps: int = 50,
     vocab_size: int = 11,
-    example_index: int = 0,
+    example_index: int | None = None,
     device: str | torch.device = "cpu",
     title: str | None = None,
 ) -> plt.Figure:
-    """Visualize corruption progression of a single example through all timesteps.
+    """Visualize corruption progression of examples through all timesteps.
 
     Args:
         batch: A single batch containing condition and target tokens
@@ -281,12 +281,12 @@ def create_corruption_progression_visualization(
         max_grid_size: Maximum grid size for visualization
         max_timesteps: Maximum number of diffusion timesteps
         vocab_size: Size of token vocabulary
-        example_index: Which example from the batch to visualize
+        example_index: Which example from the batch to visualize (None = all examples)
         device: Device to run corruption on
         title: Optional title for the figure
 
     Returns:
-        Matplotlib figure showing the example at t=0, 1, 2, ..., max_timesteps
+        Matplotlib figure showing the example(s) at t=0, 1, 2, ..., max_timesteps
     """
     if isinstance(device, str):
         device = torch.device(device)
@@ -299,18 +299,21 @@ def create_corruption_progression_visualization(
     target = batch["target"].to(device)
     target_mask = batch["target_mask"].to(device)
 
-    # Take the specified example from the batch
-    condition = condition[example_index : example_index + 1]
-    condition_mask = condition_mask[example_index : example_index + 1]
-    target = target[example_index : example_index + 1]
-    target_mask = target_mask[example_index : example_index + 1]
+    # Select examples to visualize
+    if example_index is not None:
+        condition = condition[example_index : example_index + 1]
+        condition_mask = condition_mask[example_index : example_index + 1]
+        target = target[example_index : example_index + 1]
+        target_mask = target_mask[example_index : example_index + 1]
 
-    # Generate corrupted versions for each timestep (0 to max_timesteps-1)
+    num_examples = condition.size(0)
     num_timesteps = max_timesteps
-    corrupted_at_each_t = []
+
+    # Generate corrupted versions for each example at each timestep
+    corrupted_at_each_t_and_example = []
 
     for t in range(num_timesteps):
-        timesteps = torch.tensor([t], device=device)
+        timesteps = torch.full((num_examples,), t, device=device)
         corrupted = _corrupt_tokens(
             target,
             target_mask,
@@ -319,44 +322,62 @@ def create_corruption_progression_visualization(
             sqrt_one_minus,
             vocab_size=vocab_size,
         )
-        corrupted_at_each_t.append(corrupted[0].cpu())
+        corrupted_at_each_t_and_example.append(corrupted.cpu())
 
-    # Create visualization grid: 3 rows x (num_timesteps) columns
-    # Row 1: Condition (repeated)
-    # Row 2: Target (repeated)
-    # Row 3: Corrupted at each timestep
-    fig, axes = plt.subplots(3, num_timesteps, figsize=(2.5 * num_timesteps, 7.5))
+    # Create visualization grid: (3 * num_examples) rows x num_timesteps columns
+    # For each example:
+    #   Row 1: Condition (repeated across timesteps)
+    #   Row 2: Target (repeated across timesteps)
+    #   Row 3: Corrupted at each timestep
+    fig, axes = plt.subplots(
+        3 * num_examples,
+        num_timesteps,
+        figsize=(2.5 * num_timesteps, 2.5 * 3 * num_examples)
+    )
     if title:
-        fig.suptitle(title, fontsize=16, y=0.98)
+        fig.suptitle(title, fontsize=16, y=0.995)
 
-    for col in range(num_timesteps):
-        # Plot condition (same for all timesteps)
-        cond_grid = _tokens_to_color_grid(
-            condition[0].cpu(),
-            condition_mask[0].cpu(),
-            max_grid_size=max_grid_size,
-        )
-        _plot_single(axes[0, col], cond_grid, title=f"Condition" if col == 0 else "")
+    # Handle single example case
+    if num_examples == 1 and num_timesteps == 1:
+        axes = np.array([[axes]])
+    elif num_examples == 1:
+        axes = axes.reshape(3, num_timesteps)
+    elif num_timesteps == 1:
+        axes = axes.reshape(3 * num_examples, 1)
 
-        # Plot target (same for all timesteps)
-        tgt_grid = _tokens_to_color_grid(
-            target[0].cpu(),
-            target_mask[0].cpu(),
-            max_grid_size=max_grid_size,
-        )
-        _plot_single(
-            axes[1, col],
-            tgt_grid,
-            title=f"Target (t={col})" if col == 0 else f"t={col}",
-        )
+    for example_idx in range(num_examples):
+        row_offset = example_idx * 3
 
-        # Plot corrupted at this timestep
-        corrupted_grid = _tokens_to_color_grid(
-            corrupted_at_each_t[col],
-            target_mask[0].cpu(),
-            max_grid_size=max_grid_size,
-        )
-        _plot_single(axes[2, col], corrupted_grid, title=f"Corrupted (t={col})")
+        for col in range(num_timesteps):
+            # Plot condition (same for all timesteps)
+            cond_grid = _tokens_to_color_grid(
+                condition[example_idx].cpu(),
+                condition_mask[example_idx].cpu(),
+                max_grid_size=max_grid_size,
+            )
+            title_str = f"Ex{example_idx+1} Condition" if col == 0 else ""
+            _plot_single(axes[row_offset, col], cond_grid, title=title_str)
+
+            # Plot target (same for all timesteps)
+            tgt_grid = _tokens_to_color_grid(
+                target[example_idx].cpu(),
+                target_mask[example_idx].cpu(),
+                max_grid_size=max_grid_size,
+            )
+            title_str = f"Ex{example_idx+1} Target" if col == 0 else f"t={col}"
+            _plot_single(axes[row_offset + 1, col], tgt_grid, title=title_str)
+
+            # Plot corrupted at this timestep
+            corrupted_grid = _tokens_to_color_grid(
+                corrupted_at_each_t_and_example[col][example_idx],
+                target_mask[example_idx].cpu(),
+                max_grid_size=max_grid_size,
+            )
+            _plot_single(
+                axes[row_offset + 2, col],
+                corrupted_grid,
+                title=f"Corrupted (t={col})"
+            )
 
     fig.tight_layout()
     return fig
