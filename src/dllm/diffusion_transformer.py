@@ -10,9 +10,24 @@ import torch
 import torch.nn as nn
 
 
-def cosine_beta_schedule(timesteps: int, s: float = 0.008) -> torch.Tensor:
-    """Cosine schedule from https://arxiv.org/abs/2102.09672."""
+def linear_beta_schedule(timesteps: int, beta_start: float = 1e-4, beta_end: float = 0.02) -> torch.Tensor:
+    """Linear schedule for beta values.
 
+    Args:
+        timesteps: Number of diffusion steps
+        beta_start: Starting beta value (low noise)
+        beta_end: Ending beta value (high noise)
+    """
+    return torch.linspace(beta_start, beta_end, timesteps)
+
+
+def cosine_beta_schedule(timesteps: int, s: float = 0.008) -> torch.Tensor:
+    """Cosine schedule from https://arxiv.org/abs/2102.09672.
+
+    Args:
+        timesteps: Number of diffusion steps
+        s: Offset parameter controlling schedule steepness (higher = gentler)
+    """
     steps = timesteps + 1
     x = torch.linspace(0, timesteps, steps)
     alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * math.pi / 2) ** 2
@@ -31,7 +46,7 @@ class DiffusionTransformerConfig:
     num_layers: int = 7
     dim_feedforward: int = 1152
     dropout: float = 0.1
-    max_timesteps: int = 100
+    max_timesteps: int = 10
     time_embed_dim: int = 512
 
     @property
@@ -164,8 +179,34 @@ def timestep_embedding(timesteps: torch.Tensor, dim: int, max_period: int = 1000
     return embedding
 
 
-def build_diffusion_schedule(timesteps: int, device: torch.device) -> Dict[str, torch.Tensor]:
-    betas = cosine_beta_schedule(timesteps).to(device)
+def build_diffusion_schedule(
+    timesteps: int,
+    device: torch.device,
+    schedule_type: str = "cosine",
+    s: float = 0.008,
+    beta_start: float = 1e-4,
+    beta_end: float = 0.02,
+) -> Dict[str, torch.Tensor]:
+    """Build diffusion noise schedule.
+
+    Args:
+        timesteps: Number of diffusion steps
+        device: Device to place tensors on
+        schedule_type: Type of schedule ("linear" or "cosine")
+        s: Cosine schedule offset parameter (only used if schedule_type="cosine")
+        beta_start: Linear schedule start value (only used if schedule_type="linear")
+        beta_end: Linear schedule end value (only used if schedule_type="linear")
+
+    Returns:
+        Dictionary containing schedule tensors
+    """
+    if schedule_type == "linear":
+        betas = linear_beta_schedule(timesteps, beta_start=beta_start, beta_end=beta_end).to(device)
+    elif schedule_type == "cosine":
+        betas = cosine_beta_schedule(timesteps, s=s).to(device)
+    else:
+        raise ValueError(f"Unknown schedule_type: {schedule_type}. Must be 'linear' or 'cosine'")
+
     alphas = 1.0 - betas
     alphas_cumprod = torch.cumprod(alphas, dim=0)
     alphas_cumprod_prev = torch.cat([torch.ones(1, device=device), alphas_cumprod[:-1]], dim=0)
