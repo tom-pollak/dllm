@@ -34,7 +34,7 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--examples-per-batch", type=int, default=1)
     parser.add_argument("--val-fraction", type=float, default=0.1)
     parser.add_argument("--max-grid-size", type=int, default=30)
-    parser.add_argument("--timesteps", type=int, default=1000)
+    parser.add_argument("--timesteps", type=int, default=100)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--d-model", type=int, default=288)

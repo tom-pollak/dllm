@@ -28,7 +28,7 @@ To inspect the batches used during training, including how the diffusion process
 python batch_visualization.py data/ARC-master/data --checkpoint outputs/diffusion_arc/final_model.pt
 ```
 
-This command saves `train_batches.png` and `val_batches.png` under `outputs/visualizations/`, each showing five batches of samples with the condition, target, and a randomly corrupted view at different diffusion timesteps.
+This command saves `train_batches.png` and `val_batches.png` under `outputs/visualizations/`, each showing five batches of samples with the condition, target, and a randomly corrupted view at different diffusion timesteps (defaulting to a compact 0–99 range).
 
 ## Tests
 
