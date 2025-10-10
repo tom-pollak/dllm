@@ -61,7 +61,7 @@ def test_main_runs_with_tiny_model(tmp_path: Path) -> None:
         "--dim-feedforward",
         "32",
         "--time-embed-dim",
-        "32",
+        "10",
     ]
 
     main(argv)
