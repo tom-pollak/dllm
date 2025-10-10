@@ -79,13 +79,6 @@ def to_device(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str,
     return {k: v.to(device) for k, v in batch.items()}
 
 
-def decode_tokens(embeddings: torch.Tensor, token_embed: torch.nn.Embedding) -> torch.Tensor:
-    weight = token_embed.weight
-    logits = torch.einsum("bld,vd->blv", embeddings, weight)
-    tokens = logits.argmax(dim=-1)
-    return tokens
-
-
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     set_seed(args.seed)
