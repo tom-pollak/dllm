@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from typing import Dict, Sequence
@@ -11,7 +10,7 @@ from typing import Dict, Sequence
 import torch
 from torch.utils.data import DataLoader, random_split
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_config import SettingsConfig, SettingsModel
 from pydantic_config.main import ConfigFileSettingsSource
 
@@ -32,31 +31,48 @@ class DiffusionArcTrainingConfig(SettingsModel):
 
     data_dir: Path
     output_dir: Path = Path("outputs/diffusion_arc")
-    batch_size: int = 32
-    epochs: int = 50
-    lr: float = 3e-4
-    weight_decay: float = 0.01
-    timesteps: int = 1000
-    val_fraction: float = 0.1
+    batch_size: int = Field(32, ge=1)
+    epochs: int = Field(50, ge=1)
+    lr: float = Field(3e-4, gt=0)
+    weight_decay: float = Field(0.01, ge=0)
+    timesteps: int = Field(1000, ge=1)
+    val_fraction: float = Field(0.1, ge=0.0, lt=1.0)
     seed: int = 42
-    grad_clip: float = 1.0
+    grad_clip: float = Field(1.0, ge=0.0)
     device: str = Field(default_factory=_default_device)
-    ema: float = 0.0
-    duality_weight: float = 0.5
-    log_interval: int = 100
-    num_workers: int = 2
-    save_interval: int = 5
+    ema: float = Field(0.0, ge=0.0, le=1.0)
+    duality_weight: float = Field(0.5, ge=0.0)
+    log_interval: int = Field(100, ge=1)
+    num_workers: int = Field(2, ge=0)
+    save_interval: int = Field(5, ge=1)
     resume: Path | None = None
     augment: bool = False
     mixed_precision: bool = False
-    max_grid_size: int = 30
-    d_model: int = 288
-    num_heads: int = 8
-    num_layers: int = 7
-    dim_feedforward: int = 1152
-    time_embed_dim: int = 512
+    max_grid_size: int = Field(30, ge=1)
+    d_model: int = Field(288, ge=1)
+    num_heads: int = Field(8, ge=1)
+    num_layers: int = Field(7, ge=1)
+    dim_feedforward: int = Field(1152, ge=1)
+    time_embed_dim: int = Field(512, ge=1)
 
     model_config = SettingsConfig(extra="forbid")
+
+    @model_validator(mode="after")
+    def _normalise_paths(self) -> "DiffusionArcTrainingConfig":
+        self.data_dir = self.data_dir.expanduser()
+        if not self.data_dir.exists():
+            raise ValueError(f"data_dir does not exist: {self.data_dir}")
+        if not self.data_dir.is_dir():
+            raise ValueError(f"data_dir must be a directory: {self.data_dir}")
+
+        self.output_dir = self.output_dir.expanduser()
+
+        if self.resume is not None:
+            self.resume = self.resume.expanduser()
+            if not self.resume.exists():
+                raise ValueError(f"resume checkpoint not found: {self.resume}")
+
+        return self
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> "DiffusionArcTrainingConfig":
@@ -96,7 +112,7 @@ def main(config: DiffusionArcTrainingConfig | Path | str) -> None:
     set_seed(cfg.seed)
 
     device = torch.device(cfg.device)
-    os.makedirs(cfg.output_dir, exist_ok=True)
+    cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
     dataset = ARCTaskDataset(
         cfg.data_dir,
@@ -104,20 +120,30 @@ def main(config: DiffusionArcTrainingConfig | Path | str) -> None:
         max_grid_size=cfg.max_grid_size,
         augment=cfg.augment,
     )
-    val_size = max(1, int(len(dataset) * cfg.val_fraction))
-    train_size = len(dataset) - val_size
+    total_items = len(dataset)
+    if total_items == 0:
+        raise RuntimeError(f"No ARC tasks found in {cfg.data_dir}")
+
+    val_size = int(total_items * cfg.val_fraction)
+    if cfg.val_fraction > 0 and val_size == 0 and total_items > 1:
+        val_size = 1
+    if val_size >= total_items:
+        val_size = total_items - 1
+    train_size = total_items - val_size
+
     generator = torch.Generator().manual_seed(cfg.seed)
     train_dataset, val_dataset = random_split(
         dataset, [train_size, val_size], generator=generator,
     )
 
+    pin_memory = device.type == "cuda"
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
         shuffle=True,
         collate_fn=arc_collate,
         num_workers=cfg.num_workers,
-        pin_memory=True,
+        pin_memory=pin_memory,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -125,7 +151,7 @@ def main(config: DiffusionArcTrainingConfig | Path | str) -> None:
         shuffle=False,
         collate_fn=arc_collate,
         num_workers=cfg.num_workers,
-        pin_memory=True,
+        pin_memory=pin_memory,
     )
 
     model_config = DiffusionTransformerConfig(
@@ -185,11 +211,11 @@ def main(config: DiffusionArcTrainingConfig | Path | str) -> None:
         val_loss = evaluate(model, val_loader, schedule, cfg.duality_weight, device)
         print(f"Epoch {epoch}: train_loss={avg_loss:.4f} val_loss={val_loss:.4f}")
         if epoch % cfg.save_interval == 0:
-            save_path = Path(cfg.output_dir) / f"checkpoint_{epoch}.pt"
+            save_path = cfg.output_dir / f"checkpoint_{epoch}.pt"
             save_checkpoint(model, optimizer, scheduler, ema_model, save_path)
             print(f"Saved checkpoint to {save_path}")
 
-    final_path = Path(cfg.output_dir) / "final_model.pt"
+    final_path = cfg.output_dir / "final_model.pt"
     save_checkpoint(model, optimizer, scheduler, ema_model, final_path)
     print(f"Training completed, model saved to {final_path}")
 

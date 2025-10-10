@@ -42,22 +42,22 @@ Create a YAML file describing your run. Every field has a sensible default excep
 
 | Field | Description |
 | --- | --- |
-| `data_dir` | Path to the ARC dataset root containing `training/` and `evaluation/` folders. |
-| `output_dir` | Directory where checkpoints and the final model will be written. |
-| `batch_size` | Batch size for both training and validation loaders. |
-| `epochs` | Number of full passes over the training set. |
-| `lr` / `weight_decay` | AdamW optimizer hyper-parameters. |
-| `timesteps` | Number of diffusion steps in the schedule. |
-| `val_fraction` | Fraction of the dataset used for validation. |
+| `data_dir` | Path to the ARC dataset root containing `training/` and `evaluation/` folders. The directory must exist. |
+| `output_dir` | Directory where checkpoints and the final model will be written (created automatically when missing). |
+| `batch_size` | Batch size for both training and validation loaders (must be ≥ 1). |
+| `epochs` | Number of full passes over the training set (must be ≥ 1). |
+| `lr` / `weight_decay` | AdamW optimizer hyper-parameters (learning rate must be > 0). |
+| `timesteps` | Number of diffusion steps in the schedule (must be ≥ 1). |
+| `val_fraction` | Fraction of the dataset used for validation. Values > 0 reserve at least one example when possible and must be < 1. |
 | `seed` | Random seed for Python, PyTorch and data splits. |
 | `grad_clip` | Gradient clipping value (set to `0` to disable). |
 | `device` | Device string understood by `torch.device`, defaults to `cuda` when available. |
-| `ema` | Exponential moving average decay for model weights (disabled when `0`). |
-| `duality_weight` | Weight applied to the clean target reconstruction loss term. |
-| `log_interval` | Number of training steps between log messages. |
-| `num_workers` | Data loader worker count. |
-| `save_interval` | Save a checkpoint every N epochs. |
-| `resume` | Optional path to a checkpoint to resume from. |
+| `ema` | Exponential moving average decay for model weights (`0` disables EMA, must be between `0` and `1`). |
+| `duality_weight` | Weight applied to the clean target reconstruction loss term (must be ≥ 0). |
+| `log_interval` | Number of training steps between log messages (must be ≥ 1). |
+| `num_workers` | Data loader worker count (must be ≥ 0). |
+| `save_interval` | Save a checkpoint every N epochs (must be ≥ 1). |
+| `resume` | Optional path to a checkpoint to resume from. The file must exist when provided. |
 | `augment` | Enable random grid flips during dataset loading. |
 | `mixed_precision` | Enable automatic mixed precision training. |
 | `max_grid_size`, `d_model`, `num_heads`, `num_layers`, `dim_feedforward`, `time_embed_dim` | Architectural parameters passed to `DiffusionTransformerConfig`. |
