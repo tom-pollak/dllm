@@ -31,7 +31,7 @@ class DiffusionTransformerConfig:
     num_layers: int = 7
     dim_feedforward: int = 1152
     dropout: float = 0.1
-    max_timesteps: int = 1000
+    max_timesteps: int = 100
     time_embed_dim: int = 512
 
     @property

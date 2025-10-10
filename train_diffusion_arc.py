@@ -36,7 +36,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
-    parser.add_argument("--timesteps", type=int, default=1000)
+    parser.add_argument("--timesteps", type=int, default=100)
     parser.add_argument("--val-fraction", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--grad-clip", type=float, default=1.0)
@@ -77,13 +77,6 @@ def mask_mse(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> to
 
 def to_device(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, torch.Tensor]:
     return {k: v.to(device) for k, v in batch.items()}
-
-
-def decode_tokens(embeddings: torch.Tensor, token_embed: torch.nn.Embedding) -> torch.Tensor:
-    weight = token_embed.weight
-    logits = torch.einsum("bld,vd->blv", embeddings, weight)
-    tokens = logits.argmax(dim=-1)
-    return tokens
 
 
 def main(argv: list[str] | None = None) -> None:
