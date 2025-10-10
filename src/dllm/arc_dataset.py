@@ -12,7 +12,7 @@ import json
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Sequence, Tuple
 
 import torch
 from torch.utils.data import Dataset
@@ -21,11 +21,76 @@ ColorGrid = List[List[int]]
 
 
 @dataclass
-class ARCExample:
-    """Single ARC training example."""
+class ARCDemonstration:
+    """Single input/output pair provided inside an ARC task."""
 
     input_grid: ColorGrid
     output_grid: ColorGrid
+
+
+@dataclass
+class ARCTask:
+    """Collection of demonstrations that describe one ARC puzzle."""
+
+    name: str
+    demonstrations: List[ARCDemonstration]
+
+
+def load_arc_tasks(root: str | Path, split: str = "training") -> List[ARCTask]:
+    """Load ARC tasks from ``root/split`` preserving task boundaries."""
+
+    root_path = Path(root)
+    split_dir = root_path / split
+    if not split_dir.exists():
+        raise FileNotFoundError(f"Split directory {split_dir} was not found.")
+
+    tasks: List[ARCTask] = []
+    for path in sorted(split_dir.glob("*.json")):
+        with path.open("r") as fp:
+            data = json.load(fp)
+
+        demonstrations = [
+            ARCDemonstration(input_grid=pair["input"], output_grid=pair["output"])
+            for pair in data.get("train", [])
+        ]
+        if not demonstrations:
+            continue
+        tasks.append(ARCTask(name=path.stem, demonstrations=demonstrations))
+
+    if not tasks:
+        raise ValueError(f"No ARC tasks were found in {split_dir}.")
+    return tasks
+
+
+def split_arc_tasks(
+    tasks: Sequence[ARCTask],
+    val_fraction: float,
+    seed: int,
+) -> Tuple[List[ARCTask], List[ARCTask]]:
+    """Split a sequence of tasks into train/validation lists.
+
+    Splitting happens at the *task* level to avoid leaking demonstrations
+    from the same puzzle across splits.
+    """
+
+    task_list = list(tasks)
+    if not task_list:
+        return [], []
+
+    rng = random.Random(seed)
+    indices = list(range(len(task_list)))
+    rng.shuffle(indices)
+
+    val_count = int(len(task_list) * val_fraction)
+    if val_fraction > 0 and val_count == 0 and len(task_list) > 1:
+        val_count = 1
+    if val_count >= len(task_list):
+        val_count = len(task_list) - 1
+
+    val_indices = set(indices[:val_count])
+    train_tasks = [task_list[i] for i in indices if i not in val_indices]
+    val_tasks = [task_list[i] for i in indices if i in val_indices]
+    return train_tasks, val_tasks
 
 
 def _pad_grid(
@@ -44,80 +109,60 @@ def _pad_grid(
 
 
 class ARCTaskDataset(Dataset):
-    """Dataset that reads ARC style json files."""
+    """Dataset that exposes ARC demonstrations without breaking task groups."""
 
     def __init__(
         self,
-        root: str | Path,
+        root: str | Path | None = None,
+        *,
+        tasks: Iterable[ARCTask] | None = None,
         split: str = "training",
         max_grid_size: int = 30,
         pad_token_id: int = 10,
         augment: bool = False,
     ) -> None:
         super().__init__()
-        self.root = Path(root)
-        self.split = split
+        if augment:
+            raise ValueError(
+                "Data augmentation is not supported because it corrupts ARC tasks."
+            )
+
+        if tasks is None:
+            if root is None:
+                raise ValueError("Either `root` or `tasks` must be provided.")
+            tasks = load_arc_tasks(root, split)
+
+        self.tasks: List[ARCTask] = list(tasks)
         self.max_grid_size = max_grid_size
         self.pad_token_id = pad_token_id
-        self.augment = augment
-        self.examples: List[ARCExample] = []
-        split_dir = self.root / split
-        if not split_dir.exists():
-            raise FileNotFoundError(f"Split directory {split_dir} was not found.")
-        for path in sorted(split_dir.glob("*.json")):
-            with path.open("r") as fp:
-                data = json.load(fp)
-            for pair in data.get("train", []):
-                self.examples.append(
-                    ARCExample(input_grid=pair["input"], output_grid=pair["output"])
-                )
+
+        self._examples: List[Tuple[int, ARCDemonstration]] = []
+        for task_idx, task in enumerate(self.tasks):
+            for demo in task.demonstrations:
+                self._examples.append((task_idx, demo))
+
+    @property
+    def num_tasks(self) -> int:
+        """Return the number of unique ARC tasks in this dataset."""
+
+        return len(self.tasks)
 
     def __len__(self) -> int:  # pragma: no cover - trivial
-        return len(self.examples)
+        return len(self._examples)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        ex = self.examples[idx]
-        input_grid, input_mask = _pad_grid(
-            ex.input_grid, self.max_grid_size, self.pad_token_id
+        _, demo = self._examples[idx]
+        condition, condition_mask = _pad_grid(
+            demo.input_grid, self.max_grid_size, self.pad_token_id
         )
-        target_grid, target_mask = _pad_grid(
-            ex.output_grid, self.max_grid_size, self.pad_token_id
+        target, target_mask = _pad_grid(
+            demo.output_grid, self.max_grid_size, self.pad_token_id
         )
-        sample = {
-            "condition": input_grid,
-            "condition_mask": input_mask,
-            "target": target_grid,
-            "target_mask": target_mask,
-        }
-        if self.augment and random.random() < 0.5:
-            sample = self._augment(sample)
-        return sample
-
-    def _augment(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """Apply simple random flips to encourage invariances."""
-
-        side = self.max_grid_size
-        cond = sample["condition"].view(side, side)
-        targ = sample["target"].view(side, side)
-        mask_c = sample["condition_mask"].view(side, side)
-        mask_t = sample["target_mask"].view(side, side)
-
-        if random.random() < 0.5:
-            cond = torch.flip(cond, dims=[0])
-            targ = torch.flip(targ, dims=[0])
-            mask_c = torch.flip(mask_c, dims=[0])
-            mask_t = torch.flip(mask_t, dims=[0])
-        if random.random() < 0.5:
-            cond = torch.flip(cond, dims=[1])
-            targ = torch.flip(targ, dims=[1])
-            mask_c = torch.flip(mask_c, dims=[1])
-            mask_t = torch.flip(mask_t, dims=[1])
-
         return {
-            "condition": cond.view(-1),
-            "condition_mask": mask_c.view(-1),
-            "target": targ.view(-1),
-            "target_mask": mask_t.view(-1),
+            "condition": condition,
+            "condition_mask": condition_mask,
+            "target": target,
+            "target_mask": target_mask,
         }
 
 

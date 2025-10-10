@@ -139,6 +139,7 @@ class DiffusionTransformer(nn.Module):
         diffusion_schedule: Dict[str, torch.Tensor],
         steps: Optional[int] = None,
         guidance_scale: float = 1.0,
+        target_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Iteratively sample a target grid given a condition."""
 
@@ -150,8 +151,10 @@ class DiffusionTransformer(nn.Module):
         betas = diffusion_schedule["betas"]
         posterior_variance = diffusion_schedule["posterior_variance"]
         target_shape = (condition_tokens.size(0), total_tokens, cfg.d_model)
-        x = torch.randn(target_shape, device=device)
-        target_mask = torch.ones_like(condition_mask)
+        if target_mask is None:
+            target_mask = torch.ones_like(condition_mask)
+        mask = target_mask.unsqueeze(-1)
+        x = torch.randn(target_shape, device=device) * mask
 
         for i in reversed(range(timesteps)):
             t = torch.full((condition_tokens.size(0),), i, device=device, dtype=torch.long)
@@ -163,9 +166,9 @@ class DiffusionTransformer(nn.Module):
             model_mean = sqrt_recip_alpha * x - beta * model_out
             if i > 0:
                 noise = torch.randn_like(x)
-                x = model_mean + torch.sqrt(posterior_variance[i]) * noise
+                x = (model_mean + torch.sqrt(posterior_variance[i]) * noise) * mask
             else:
-                x = model_mean
+                x = model_mean * mask
         return x
 
 

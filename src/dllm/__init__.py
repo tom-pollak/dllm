@@ -1,6 +1,6 @@
 """Core modules for diffusion transformer ARC training."""
 
-from .arc_dataset import ARCTaskDataset, arc_collate
+from .arc_dataset import ARCTaskDataset, arc_collate, load_arc_tasks, split_arc_tasks
 from .diffusion_transformer import (
     DiffusionTransformerConfig,
     DiffusionTransformer,
@@ -17,6 +17,8 @@ from .visualize_sampling import (
 __all__ = [
     "ARCTaskDataset",
     "arc_collate",
+    "load_arc_tasks",
+    "split_arc_tasks",
     "DiffusionTransformerConfig",
     "DiffusionTransformer",
     "cosine_beta_schedule",
