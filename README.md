@@ -62,6 +62,9 @@ Create a YAML file describing your run. Every field has a sensible default excep
 | `mixed_precision` | Enable automatic mixed precision training. |
 | `max_grid_size`, `d_model`, `num_heads`, `num_layers`, `dim_feedforward`, `time_embed_dim` | Architectural parameters passed to `DiffusionTransformerConfig`. |
 
+Relative paths are resolved from the directory that contains the YAML file, so a configuration can live alongside the data and checkpoints.
+Absolute paths continue to work as usual.
+
 Example configuration:
 
 ```yaml

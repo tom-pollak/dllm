@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Dict, Sequence
+from typing import ClassVar, Dict, Sequence
 
 import torch
 from torch.utils.data import DataLoader, random_split
@@ -28,6 +28,8 @@ def _default_device() -> str:
 
 class DiffusionArcTrainingConfig(SettingsModel):
     """Configuration for diffusion transformer ARC training."""
+
+    _base_dir: ClassVar[Path | None] = None
 
     data_dir: Path
     output_dir: Path = Path("outputs/diffusion_arc")
@@ -57,32 +59,50 @@ class DiffusionArcTrainingConfig(SettingsModel):
 
     model_config = SettingsConfig(extra="forbid")
 
+    @staticmethod
+    def _resolve_path(value: Path, base_dir: Path | None) -> Path:
+        value = value.expanduser()
+        if not value.is_absolute():
+            base = base_dir or Path.cwd()
+            value = (base / value).expanduser()
+        return value
+
     @model_validator(mode="after")
     def _normalise_paths(self) -> "DiffusionArcTrainingConfig":
-        self.data_dir = self.data_dir.expanduser()
+        base_dir = self.__class__._base_dir
+
+        self.data_dir = self._resolve_path(self.data_dir, base_dir)
         if not self.data_dir.exists():
             raise ValueError(f"data_dir does not exist: {self.data_dir}")
         if not self.data_dir.is_dir():
             raise ValueError(f"data_dir must be a directory: {self.data_dir}")
 
-        self.output_dir = self.output_dir.expanduser()
+        self.output_dir = self._resolve_path(self.output_dir, base_dir)
 
         if self.resume is not None:
-            self.resume = self.resume.expanduser()
-            if not self.resume.exists():
-                raise ValueError(f"resume checkpoint not found: {self.resume}")
+            resume_path = self._resolve_path(self.resume, base_dir)
+            if not resume_path.exists():
+                raise ValueError(f"resume checkpoint not found: {resume_path}")
+            self.resume = resume_path
 
         return self
 
     @classmethod
     def from_yaml(cls, path: Path | str) -> "DiffusionArcTrainingConfig":
+        config_path = Path(path)
+        if not config_path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
         source = ConfigFileSettingsSource(
             cls,
-            config_file=Path(path),
+            config_file=config_path,
             config_file_required=True,
         )
         data = source()
-        return cls.model_validate(data)
+        cls._base_dir = config_path.resolve().parent
+        try:
+            return cls.model_validate(data)
+        finally:
+            cls._base_dir = None
 
 
 def set_seed(seed: int) -> None:

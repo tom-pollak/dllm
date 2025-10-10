@@ -39,9 +39,9 @@ def test_main_runs_with_tiny_model(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         textwrap.dedent(
-            f"""
-            data_dir: {data_dir}
-            output_dir: {output_dir}
+            """
+            data_dir: arc
+            output_dir: outputs
             batch_size: 1
             epochs: 1
             timesteps: 4
