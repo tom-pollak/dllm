@@ -13,6 +13,9 @@ cd data
 curl -L https://github.com/fchollet/ARC/archive/refs/heads/master.zip -o arc.zip
 unzip arc.zip 'ARC-AGI-master/data/*'
 cd ..
+
+# Run training with a YAML config (see the Configuration section below)
+python train_diffusion_arc.py path/to/config.yaml
 ```
 
 Any mirror with the same folder structure will also work. The `ARCTaskDataset` loader simply walks every `*.json` file inside the specified split directory.
