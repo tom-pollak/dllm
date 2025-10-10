@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict
 
 import torch
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 
 from dllm import (
     ARCTaskDataset,
@@ -17,6 +17,8 @@ from dllm import (
     DiffusionTransformerConfig,
     arc_collate,
     build_diffusion_schedule,
+    load_arc_tasks,
+    split_arc_tasks,
 )
 
 
@@ -86,17 +88,23 @@ def main(argv: list[str] | None = None) -> None:
     device = torch.device(args.device)
     os.makedirs(args.output_dir, exist_ok=True)
 
-    dataset = ARCTaskDataset(
-        args.data_dir,
-        split="training",
+    tasks = load_arc_tasks(args.data_dir, split="training")
+    train_tasks, val_tasks = split_arc_tasks(tasks, args.val_fraction, args.seed)
+    if args.augment:
+        print(
+            "[warning] --augment is ignored because modifying ARC inputs corrupts tasks."
+        )
+
+    pad_token_id = DiffusionTransformerConfig().pad_token_id
+    train_dataset = ARCTaskDataset(
+        tasks=train_tasks,
         max_grid_size=args.max_grid_size,
-        augment=args.augment,
+        pad_token_id=pad_token_id,
     )
-    val_size = max(1, int(len(dataset) * args.val_fraction))
-    train_size = len(dataset) - val_size
-    generator = torch.Generator().manual_seed(args.seed)
-    train_dataset, val_dataset = random_split(
-        dataset, [train_size, val_size], generator=generator,
+    val_dataset = ARCTaskDataset(
+        tasks=val_tasks,
+        max_grid_size=args.max_grid_size,
+        pad_token_id=pad_token_id,
     )
 
     train_loader = DataLoader(
