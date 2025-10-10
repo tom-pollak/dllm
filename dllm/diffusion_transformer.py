@@ -156,7 +156,7 @@ class DiffusionTransformer(nn.Module):
 
 def timestep_embedding(timesteps: torch.Tensor, dim: int, max_period: int = 10000) -> torch.Tensor:
     half = dim // 2
-    freqs = torch.exp(-math.log(max_period) * torch.arange(half, dtype=torch.float32) / half)
+    freqs = torch.exp(-math.log(max_period) * torch.arange(half, dtype=torch.float32, device=timesteps.device) / half)
     args = timesteps.float().unsqueeze(1) * freqs.unsqueeze(0)
     embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
     if dim % 2:
