@@ -1,5 +1,6 @@
 import json
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -35,37 +36,30 @@ def test_main_runs_with_tiny_model(tmp_path: Path) -> None:
 
     output_dir = tmp_path / "outputs"
 
-    argv = [
-        str(data_dir),
-        "--output-dir",
-        str(output_dir),
-        "--batch-size",
-        "1",
-        "--epochs",
-        "1",
-        "--timesteps",
-        "4",
-        "--num-workers",
-        "0",
-        "--log-interval",
-        "1",
-        "--skip-param-check",
-        "--device",
-        "cpu",
-        "--max-grid-size",
-        "3",
-        "--d-model",
-        "16",
-        "--num-heads",
-        "4",
-        "--num-layers",
-        "1",
-        "--dim-feedforward",
-        "32",
-        "--time-embed-dim",
-        "32",
-    ]
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        textwrap.dedent(
+            f"""
+            data_dir: {data_dir}
+            output_dir: {output_dir}
+            batch_size: 1
+            epochs: 1
+            timesteps: 4
+            num_workers: 0
+            log_interval: 1
+            device: cpu
+            max_grid_size: 3
+            d_model: 16
+            num_heads: 4
+            num_layers: 1
+            dim_feedforward: 32
+            time_embed_dim: 32
+            duality_weight: 0.0
+            """
+        ).strip()
+        + "\n"
+    )
 
-    main(argv)
+    main(config_path)
 
     assert (output_dir / "final_model.pt").exists()

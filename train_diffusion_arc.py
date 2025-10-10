@@ -3,13 +3,17 @@
 
 from __future__ import annotations
 
-import argparse
 import os
+import sys
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Sequence
 
 import torch
 from torch.utils.data import DataLoader, random_split
+
+from pydantic import Field
+from pydantic_config import SettingsConfig, SettingsModel
+from pydantic_config.main import ConfigFileSettingsSource
 
 from dllm import (
     ARCTaskDataset,
@@ -19,48 +23,50 @@ from dllm import (
     build_diffusion_schedule,
 )
 
+def _default_device() -> str:
+    return "cuda" if torch.cuda.is_available() else "cpu"
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "data_dir",
-        type=str,
-        help=(
-            "Path to ARC dataset root directory (the folder containing the "
-            "'training' and 'evaluation' sub-directories from the official "
-            "fchollet/ARC data dump)."
-        ),
-    )
-    parser.add_argument("--output-dir", type=str, default="outputs/diffusion_arc")
-    parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--weight-decay", type=float, default=0.01)
-    parser.add_argument("--timesteps", type=int, default=50)
-    parser.add_argument("--val-fraction", type=float, default=0.1)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--grad-clip", type=float, default=1.0)
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--ema", type=float, default=0.0, help="EMA decay for weights")
-    parser.add_argument("--duality-weight", type=float, default=0.5)
-    parser.add_argument("--log-interval", type=int, default=100)
-    parser.add_argument("--num-workers", type=int, default=2)
-    parser.add_argument("--save-interval", type=int, default=5)
-    parser.add_argument("--resume", type=str, default="", help="Resume checkpoint path")
-    parser.add_argument("--augment", action="store_true", help="Enable random flips for augmentation")
-    parser.add_argument("--mixed-precision", action="store_true")
-    parser.add_argument("--max-grid-size", type=int, default=30)
-    parser.add_argument("--d-model", type=int, default=288)
-    parser.add_argument("--num-heads", type=int, default=8)
-    parser.add_argument("--num-layers", type=int, default=7)
-    parser.add_argument("--dim-feedforward", type=int, default=1152)
-    parser.add_argument("--time-embed-dim", type=int, default=512)
-    parser.add_argument(
-        "--skip-param-check",
-        action="store_true",
-        help="Skip enforcing the ~7M parameter count. Useful for tests.",
-    )
-    return parser.parse_args(argv)
+
+class DiffusionArcTrainingConfig(SettingsModel):
+    """Configuration for diffusion transformer ARC training."""
+
+    data_dir: Path
+    output_dir: Path = Path("outputs/diffusion_arc")
+    batch_size: int = 32
+    epochs: int = 50
+    lr: float = 3e-4
+    weight_decay: float = 0.01
+    timesteps: int = 1000
+    val_fraction: float = 0.1
+    seed: int = 42
+    grad_clip: float = 1.0
+    device: str = Field(default_factory=_default_device)
+    ema: float = 0.0
+    duality_weight: float = 0.5
+    log_interval: int = 100
+    num_workers: int = 2
+    save_interval: int = 5
+    resume: Path | None = None
+    augment: bool = False
+    mixed_precision: bool = False
+    max_grid_size: int = 30
+    d_model: int = 288
+    num_heads: int = 8
+    num_layers: int = 7
+    dim_feedforward: int = 1152
+    time_embed_dim: int = 512
+
+    model_config = SettingsConfig(extra="forbid")
+
+    @classmethod
+    def from_yaml(cls, path: Path | str) -> "DiffusionArcTrainingConfig":
+        source = ConfigFileSettingsSource(
+            cls,
+            config_file=Path(path),
+            config_file_required=True,
+        )
+        data = source()
+        return cls.model_validate(data)
 
 
 def set_seed(seed: int) -> None:
@@ -79,107 +85,111 @@ def to_device(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str,
     return {k: v.to(device) for k, v in batch.items()}
 
 
-def main(argv: list[str] | None = None) -> None:
-    args = parse_args(argv)
-    set_seed(args.seed)
+def load_training_config(config: DiffusionArcTrainingConfig | Path | str) -> DiffusionArcTrainingConfig:
+    if isinstance(config, DiffusionArcTrainingConfig):
+        return config
+    return DiffusionArcTrainingConfig.from_yaml(config)
 
-    device = torch.device(args.device)
-    os.makedirs(args.output_dir, exist_ok=True)
+
+def main(config: DiffusionArcTrainingConfig | Path | str) -> None:
+    cfg = load_training_config(config)
+    set_seed(cfg.seed)
+
+    device = torch.device(cfg.device)
+    os.makedirs(cfg.output_dir, exist_ok=True)
 
     dataset = ARCTaskDataset(
-        args.data_dir,
+        cfg.data_dir,
         split="training",
-        max_grid_size=args.max_grid_size,
-        augment=args.augment,
+        max_grid_size=cfg.max_grid_size,
+        augment=cfg.augment,
     )
-    val_size = max(1, int(len(dataset) * args.val_fraction))
+    val_size = max(1, int(len(dataset) * cfg.val_fraction))
     train_size = len(dataset) - val_size
-    generator = torch.Generator().manual_seed(args.seed)
+    generator = torch.Generator().manual_seed(cfg.seed)
     train_dataset, val_dataset = random_split(
         dataset, [train_size, val_size], generator=generator,
     )
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=args.batch_size,
+        batch_size=cfg.batch_size,
         shuffle=True,
         collate_fn=arc_collate,
-        num_workers=args.num_workers,
+        num_workers=cfg.num_workers,
         pin_memory=True,
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=args.batch_size,
+        batch_size=cfg.batch_size,
         shuffle=False,
         collate_fn=arc_collate,
-        num_workers=args.num_workers,
+        num_workers=cfg.num_workers,
         pin_memory=True,
     )
 
-    config = DiffusionTransformerConfig(
-        max_timesteps=args.timesteps,
-        max_grid_size=args.max_grid_size,
-        d_model=args.d_model,
-        num_heads=args.num_heads,
-        num_layers=args.num_layers,
-        dim_feedforward=args.dim_feedforward,
-        time_embed_dim=args.time_embed_dim,
+    model_config = DiffusionTransformerConfig(
+        max_timesteps=cfg.timesteps,
+        max_grid_size=cfg.max_grid_size,
+        d_model=cfg.d_model,
+        num_heads=cfg.num_heads,
+        num_layers=cfg.num_layers,
+        dim_feedforward=cfg.dim_feedforward,
+        time_embed_dim=cfg.time_embed_dim,
     )
-    model = DiffusionTransformer(config).to(device)
+    model = DiffusionTransformer(model_config).to(device)
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {total_params/1e6:.2f}M")
-    #if not args.skip_param_check and not (6.5e6 <= total_params <= 7.5e6):
-    #    raise RuntimeError("Model parameter count deviates from 7M target")
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-    scaler = torch.cuda.amp.GradScaler(enabled=args.mixed_precision)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.epochs)
+    scaler = torch.cuda.amp.GradScaler(enabled=cfg.mixed_precision)
 
     ema_model = None
-    if args.ema > 0:
-        ema_model = DiffusionTransformer(config).to(device)
+    if cfg.ema > 0:
+        ema_model = DiffusionTransformer(model_config).to(device)
         ema_model.load_state_dict(model.state_dict())
 
-    if args.resume:
-        state = torch.load(args.resume, map_location=device)
+    if cfg.resume:
+        state = torch.load(cfg.resume, map_location=device)
         model.load_state_dict(state["model"])
         optimizer.load_state_dict(state["optimizer"])
         scheduler.load_state_dict(state["scheduler"])
         if ema_model is not None and "ema" in state:
             ema_model.load_state_dict(state["ema"])
-        print(f"Resumed from {args.resume}")
+        print(f"Resumed from {cfg.resume}")
 
-    schedule = build_diffusion_schedule(args.timesteps, device=device)
+    schedule = build_diffusion_schedule(cfg.timesteps, device=device)
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(1, cfg.epochs + 1):
         model.train()
         epoch_loss = 0.0
         for step, batch in enumerate(train_loader, start=1):
             batch = to_device(batch, device)
             optimizer.zero_grad(set_to_none=True)
-            with torch.cuda.amp.autocast(enabled=args.mixed_precision):
-                loss = compute_loss(model, batch, schedule, args.duality_weight)
+            with torch.cuda.amp.autocast(enabled=cfg.mixed_precision):
+                loss = compute_loss(model, batch, schedule, cfg.duality_weight)
             scaler.scale(loss).backward()
-            if args.grad_clip > 0:
+            if cfg.grad_clip > 0:
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
             scaler.step(optimizer)
             scaler.update()
             epoch_loss += loss.item()
-            if args.ema > 0:
-                update_ema(model, ema_model, args.ema)
-            if step % args.log_interval == 0:
+            if cfg.ema > 0 and ema_model is not None:
+                update_ema(model, ema_model, cfg.ema)
+            if step % cfg.log_interval == 0:
                 print(f"Epoch {epoch} Step {step}: loss={loss.item():.4f}")
         scheduler.step()
         avg_loss = epoch_loss / max(1, len(train_loader))
-        val_loss = evaluate(model, val_loader, schedule, args.duality_weight, device)
+        val_loss = evaluate(model, val_loader, schedule, cfg.duality_weight, device)
         print(f"Epoch {epoch}: train_loss={avg_loss:.4f} val_loss={val_loss:.4f}")
-        if epoch % args.save_interval == 0:
-            save_path = Path(args.output_dir) / f"checkpoint_{epoch}.pt"
+        if epoch % cfg.save_interval == 0:
+            save_path = Path(cfg.output_dir) / f"checkpoint_{epoch}.pt"
             save_checkpoint(model, optimizer, scheduler, ema_model, save_path)
             print(f"Saved checkpoint to {save_path}")
 
-    final_path = Path(args.output_dir) / "final_model.pt"
+    final_path = Path(cfg.output_dir) / "final_model.pt"
     save_checkpoint(model, optimizer, scheduler, ema_model, final_path)
     print(f"Training completed, model saved to {final_path}")
 
@@ -256,5 +266,11 @@ def save_checkpoint(
     torch.save(payload, path)
 
 
+def _main_cli(argv: Sequence[str]) -> None:
+    if len(argv) != 1:
+        raise SystemExit("Usage: python train_diffusion_arc.py <config.yaml>")
+    main(Path(argv[0]))
+
+
 if __name__ == "__main__":
-    main()
+    _main_cli(sys.argv[1:])
