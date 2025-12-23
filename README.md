@@ -25,6 +25,10 @@ In inference, this allows the model to produce multiple tokens per step.
 ## Training
 
 > **The core idea is very similar to BERT**
+>
+> My minimal training setup at: [train_dllm.py](./train_dllm.py). This just takes a pretrained BERT model and finetunes with a variable amount of masking.
+>
+> Run with `./train_dllm.py` (8 H100s).
 
 We corrupt part of the input sequence with `[MASK]` tokens, and train the model to predict these tokens using cross-entropy loss (CEL).
 
@@ -38,7 +42,7 @@ The [MASK] of France [MASK] Paris [EOS]
   Only the masked tokens contribute to the loss
 ```
 
-### A Minimal Training Script
+### A Minimal Inference Setup
 
 
 
@@ -157,6 +161,8 @@ Primary issue with masked diffusion models: No ability for self correction.
 For inference: Model starts from **random tokens**, that will be iteratively refined.
 
 - This allows it to self-correct it's previous predictions!
+
+> See training script: [train_flowlm.py](./train_flowlm.py)
 
 ## Duo's Approach:
 
